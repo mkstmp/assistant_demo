@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+websockets
+python-multipart
+sqlalchemy
+pydantic
+apscheduler
+google-genai
+python-dotenv
+aiosqlite
+greenlet

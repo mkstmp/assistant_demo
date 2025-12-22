@@ -1,11 +1,6 @@
 fastapi
-uvicorn
+uvicorn[standard]
 websockets
-python-multipart
-sqlalchemy
-pydantic
-apscheduler
 google-genai
 python-dotenv
-aiosqlite
-greenlet
+google-cloud-firestore

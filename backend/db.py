@@ -23,10 +23,10 @@ async def get_user_profile(user_id: str = "user_1"):
         # Create default user if not exists
         default_data = {
             "id": user_id,
-            "name": "User", 
-            "city": "Unknown", 
-            "timezone": "UTC",
-            "gender": "Unknown"
+            "name": "Mukesh", 
+            "city": "San Jose", 
+            "timezone": "America/Los_Angeles",
+            "gender": "Male"
         }
         await user_ref.set(default_data)
         return {**default_data, "memories": []}

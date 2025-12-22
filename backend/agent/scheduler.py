@@ -1,62 +1,57 @@
 import asyncio
-import datetime
-from sqlalchemy import select
-from models import Alarm, Timer
-from database import AsyncSessionLocal
+from datetime import datetime, timezone
+import db
 
-async def check_alarms(active_websockets):
-    """
-    Background task to check for expired alarms/timers.
-    If an alarm triggers, it sends a message to all connected WebSockets.
-    """
-    print("Background Scheduler Started")
+async def check_alarms(active_sockets):
+    print("Background Scheduler Started (Firestore Mode)", flush=True)
+    
     while True:
         try:
-            now = datetime.datetime.now()
-            async with AsyncSessionLocal() as db:
-                # Check Alarms
-                result = await db.execute(
-                    select(Alarm).where(Alarm.status == "ACTIVE", Alarm.time <= now)
-                )
-                alarms = result.scalars().all()
-
-                for alarm in alarms:
-                    print(f"ALARM TRIGGERED: {alarm.label}")
-                    alarm.status = "RINGING"
-                    alarm.triggered = True
-                    # alarm.is_active = False # Keep it technically active so we can Query it? Or rely on status
-                    
-                    # Notify all connected clients
-                    print(f"Notifying {len(active_websockets)} clients")
-                    for ws in list(active_websockets): # Send to copy to act safely
-                        try:
-                            await ws.send_json({
-                                "type": "notification",
-                                "text": f"ALARM RINGING: {alarm.label}"
-                            })
-                        except Exception as e:
-                            print(f"Warning: Failed to notify client: {e}")
-
-                # Check Timers (similar logic)
-                result = await db.execute(
-                    select(Timer).where(Timer.status == "ACTIVE", Timer.end_time <= now)
-                )
-                timers = result.scalars().all()
-                for timer in timers:
-                    print(f"TIMER FINISHED: {timer.label}")
-                    timer.status = "RINGING"
-                    timer.triggered = True
-                    # timer.is_active = False 
-                    for ws in list(active_websockets):
-                        try:
-                            await ws.send_json({"type": "notification", "text": "TIMER FINISHED!"})
-                        except Exception as e:
-                            print(f"Warning: Failed to notify client: {e}")
+            # Firestore returns timezone-aware datetimes (UTC usually).
+            # We must compare against timezone-aware 'now'.
+            now = datetime.now(timezone.utc)
+            
+            # 1. Check Alarms
+            alarms = await db.get_active_alarms()
+            for alarm in alarms:
+                alarm_time = alarm["time"]
                 
-                if alarms or timers:
-                    await db.commit()
+                # Normalize timezones: Ensure both are aware and UTC
+                if alarm_time.tzinfo is None:
+                    # Fallback if DB has naive time (shouldn't happen with Firestore)
+                    alarm_time = alarm_time.replace(tzinfo=timezone.utc)
+                else:
+                    alarm_time = alarm_time.astimezone(timezone.utc)
+                
+                if alarm["status"] == "ACTIVE" and alarm_time <= now:
+                    print(f"ALARM RINGING: {alarm['label']}", flush=True)
+                    await db.update_alarm(alarm["id"], {"status": "RINGING"})
+                    
+                    for ws in active_sockets:
+                        try:
+                            await ws.send_json({"type": "notification", "text": f"ALARM: {alarm['label']}"})
+                        except: pass
+
+            # 2. Check Timers
+            timers = await db.get_active_timers()
+            for timer in timers:
+                end_time = timer["end_time"]
+                
+                if end_time.tzinfo is None:
+                    end_time = end_time.replace(tzinfo=timezone.utc)
+                else:
+                    end_time = end_time.astimezone(timezone.utc)
+
+                if timer["status"] == "ACTIVE" and end_time <= now:
+                    print(f"TIMER FINISHED: {timer['label']}", flush=True)
+                    await db.update_timer(timer["id"], {"status": "RINGING"})
+                    
+                    for ws in active_sockets:
+                        try:
+                            await ws.send_json({"type": "notification", "text": f"TIMER: {timer['label']}"})
+                        except: pass
 
         except Exception as e:
-            print(f"Scheduler Error: {e}")
+            print(f"Scheduler Error: {e}", flush=True)
             
-        await asyncio.sleep(1) # Poll every second
+        await asyncio.sleep(1)

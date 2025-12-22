@@ -23,35 +23,34 @@ class GeminiAgent:
         # This is a placeholder for the complex Bidi protocol needed for Gemini Live
         # Ideally, we establish connection to Gemini here
         try:
-            print(f"Connecting to Gemini at {URI}")
+            print(f"DEBUG: GeminiAgent.run started. URI: {URI[:20]}...", flush=True)
             async with websockets.connect(URI) as ws:
+                print("DEBUG: Connected to Gemini Websocket", flush=True)
                 self.gemini_ws = ws
                 
                 # Fetch User Context (Async)
-                from database import AsyncSessionLocal
-                from models import User
-                from sqlalchemy import select
+                print("DEBUG: Fetching user profile from DB...", flush=True)
+                import db
                 
-                async with AsyncSessionLocal() as db:
-                    try:
-                        result = await db.execute(select(User).where(User.id == 1))
-                        user = result.scalar_one_or_none()
-                        
-                        if not user:
-                            user = User(id=1, name="User", city="Unknown", gender="Unknown")
-                            db.add(user)
-                            await db.commit()
-                        
-                        # Fetch Dynamic Memories
-                        from models import UserMemory
-                        mem_res = await db.execute(select(UserMemory).where(UserMemory.user_id == 1))
-                        memories = mem_res.scalars().all()
-                        memory_str = ". ".join([f"{m.key}: {m.value}" for m in memories])
-                        
-                        user_context = f"User Name: {user.name}. User City: {user.city}. User Timezone: {user.timezone}. User Gender: {user.gender}. {memory_str}"
-                    except Exception as e:
-                        print(f"Error fetching user context: {e}")
-                        user_context = "User Context Unavailable"
+                try:
+                    profile = await db.get_user_profile()
+                    print(f"DEBUG: Profile fetched: {profile}", flush=True)
+                    # Profile is already flat {"name": "Mukesh", "memories": [{...}]} 
+                    # Actually wait, In-Memory db returns {"memories": [{"key":.., "value":..}]} in default user
+                    # but the `memories` loop needs to look at `profile['memories']`.
+                    
+                    user_name = profile.get("name", "User")
+                    user_city = profile.get("city", "Unknown")
+                    user_tz = profile.get("timezone", "UTC")
+                    user_gender = profile.get("gender", "Unknown")
+                    
+                    memories = profile.get("memories", [])
+                    memory_str = ". ".join([f"{m['key']}: {m['value']}" for m in memories])
+                    
+                    user_context = f"User Name: {user_name}. User City: {user_city}. User Timezone: {user_tz}. User Gender: {user_gender}. {memory_str}"
+                except Exception as e:
+                    print(f"Error fetching user context: {e}")
+                    user_context = "User Context Unavailable"
 
                 # Send Initial Setup (System Instructions, Tools)
                 setup_msg = {
@@ -65,7 +64,7 @@ class GeminiAgent:
                                 "parts": [
                                     {
                                         "text": f"""
-                                        You are Pulu, a helpful, voice-based AI assistant. You are talking to {user.name}. Context: {user_context}. 
+                                        You are Pulu, a helpful, voice-based AI assistant. You are talking to {user_name}. Context: {user_context}. 
                                         
                                         CRITICAL IDENTITY:
                                         - You are a **Private Personal Assistant**.

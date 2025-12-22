@@ -1,23 +1,20 @@
 import asyncio
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
-from database import init_db, get_db
-from models import Alarm, Timer, User
+# Import new DB wrapper (In-Memory)
+import db
 from agent.client import GeminiAgent
 from agent.scheduler import check_alarms
 
 # Track active websockets for notifications
-active_sockets = []
+active_sockets = set() # Changed to set for O(1) removals
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    await init_db()
-    print("Database Initialized")
+    print("Database Initialized (In-Memory)")
     
     # Start the background scheduler
     task = asyncio.create_task(check_alarms(active_sockets))
@@ -40,65 +37,72 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- API Endpoints ---
+
+@app.get("/profile")
+async def get_profile():
+    # Fetch flat profile directly from DB
+    raw_profile = await db.get_user_profile()
+    
+    # Flatten "memories" list into top-level keys for Frontend
+    # Raw: {"name": "Mukesh", "memories": [{"key": "color", "value": "red"}]}
+    # Flattened: {"name": "Mukesh", "color": "red"}
+    
+    flat_profile = {k: v for k, v in raw_profile.items() if k != "memories"}
+    
+    if "memories" in raw_profile:
+        for mem in raw_profile["memories"]:
+             if "key" in mem and "value" in mem:
+                 flat_profile[mem["key"]] = mem["value"]
+                 
+    return flat_profile
+
+@app.get("/alarms")
+async def get_alarms():
+    return await db.get_active_alarms()
+
+@app.get("/timers")
+async def get_timers():
+    return await db.get_active_timers()
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
-
-# --- API Endpoints (Updated for new Schema) ---
-
-@app.get("/alarms")
-async def get_alarms(db: AsyncSession = Depends(get_db)):
-    # FIX: Query based on 'status' instead of 'is_active'
-    result = await db.execute(
-        select(Alarm)
-        .where(Alarm.status.in_(["ACTIVE", "RINGING"]))
-        .order_by(Alarm.time)
-    )
-    return result.scalars().all()
-
-@app.get("/timers")
-async def get_timers(db: AsyncSession = Depends(get_db)):
-    # FIX: Query based on 'status' instead of 'is_active'
-    result = await db.execute(
-        select(Timer)
-        .where(Timer.status.in_(["ACTIVE", "RINGING"]))
-        .order_by(Timer.end_time)
-    )
-    return result.scalars().all()
-
-@app.get("/profile")
-async def get_profile(db: AsyncSession = Depends(get_db)):
-    # The relationship with lazy="selectin" will auto-fetch memories
-    result = await db.execute(select(User).where(User.id == 1))
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        return {}
-
-    # Flatten logic: Standard fields + Dynamic Memories
-    profile_data = {
-        "name": user.name,
-        "city": user.city,
-        "timezone": user.timezone,
-        "gender": user.gender,
-    }
-
-    # Add memories as top-level keys
-    for mem in user.memories:
-        profile_data[mem.key] = mem.value
-        
-    return profile_data
 
 # --- WebSocket ---
 
 @app.websocket("/ws/audio")
 async def websocket_endpoint(websocket: WebSocket):
+    print("DEBUG: WebSocket /ws/audio hit!", flush=True)
     await websocket.accept()
-    active_sockets.append(websocket)
+    print("DEBUG: WebSocket accepted", flush=True)
+    active_sockets.add(websocket)
     
-    agent = GeminiAgent(websocket)
+    input_queue = asyncio.Queue()  
+    output_queue = asyncio.Queue()
+    
+    client = GeminiAgent(websocket) # Adjusted: GeminiAgent takes websocket, runs internal loop
+    # Wait... GeminiAgent in previous code was agent = GeminiAgent(websocket) and await agent.run()
+    # But wait, my previous main.py had:
+    # client = GeminiClient()
+    # gemini_task = asyncio.create_task(client.connect(input_queue, output_queue))
+    
+    # Let me check my previous main.py again in the diff.
+    # Ah, step 1863... wait, step 1966 view_file showed:
+    # agent = GeminiAgent(websocket)
+    # await agent.run()
+    
+    # NO! Step 1966 line 99: agent = GeminiAgent(websocket)
+    # But before the revert (Step 1966 is the CURRENT file after revert?), I had separate GeminiClient.
+    # Step 1853 showed GeminiAgent taking `websocket`? No, GeminiAgent took `client_ws`.
+    # Let's stick to what was in Step 1966 which IS the current state.
+    
+    # Step 1966:
+    # agent = GeminiAgent(websocket)
+    # await agent.run()
+    
     try:
-        await agent.run()
+        await client.run()
     except WebSocketDisconnect:
         print("Client disconnected")
     except Exception as e:
@@ -106,7 +110,7 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         if websocket in active_sockets:
             active_sockets.remove(websocket)
-        await agent.close()
+        await client.close()
 
 if __name__ == "__main__":
     import uvicorn

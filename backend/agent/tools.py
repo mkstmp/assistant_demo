@@ -1,21 +1,19 @@
-from pydantic import BaseModel
-from typing import Optional
-from database import AsyncSessionLocal
-from models import Alarm, Timer, User, UserMemory
-from sqlalchemy import select, delete
 from datetime import datetime, timedelta, time
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo
 import re
+import db  # New In-Memory DB
 
 # --- Helper Functions (Time Parsing) ---
 
 def parse_time_string(time_str: str, user_timezone: str = None) -> datetime:
     """Parses natural language time string into a future datetime object."""
+    # For Demo/In-Memory mode, simplify timezone handling or ignore if causing issues
+    # But let's try to keep it logic-compatible.
     tz = None
-    if user_timezone:
+    if user_timezone and user_timezone != "UTC":
         try:
             tz = ZoneInfo(user_timezone)
         except Exception as e:
@@ -85,173 +83,137 @@ def parse_duration_string(duration_str: str) -> int:
         raise ValueError(f"Could not parse duration: {duration_str}")
     return total_seconds
 
-# --- Logic Handlers ---
-
-async def _find_alarm(db, args):
-    """Helper to find an alarm by ID, or fuzzy match by Time/Label."""
-    if args.get("alarm_id"):
-        result = await db.execute(select(Alarm).where(Alarm.id == args["alarm_id"]))
-        return result.scalar_one_or_none()
-
-    if args.get("time"):
-        try:
-            target_time = parse_time_string(args["time"])
-            query = select(Alarm).where(Alarm.status.in_(["ACTIVE", "RINGING"]), Alarm.time == target_time)
-            result = await db.execute(query)
-            if match := result.scalars().first(): return match
-        except: pass
-
-    if args.get("label"):
-        query = select(Alarm).where(Alarm.status.in_(["ACTIVE", "RINGING"]), Alarm.label.ilike(f"%{args['label']}%"))
-        result = await db.execute(query)
-        return result.scalars().first()
-    
-    # Fallback: Return single active alarm IF it exists.
-    # Note: We handled the "Stop" safety check in the handle_logic function, 
-    # so this fallback is safe for 'read' or 'update' actions.
-    res = await db.execute(select(Alarm).where(Alarm.status.in_(["ACTIVE", "RINGING"])))
-    all_alarms = res.scalars().all()
-    if len(all_alarms) == 1:
-        return all_alarms[0]
-
-    return None
-
-async def _find_timer(db, args):
-    if args.get("timer_id"):
-        result = await db.execute(select(Timer).where(Timer.id == args["timer_id"]))
-        return result.scalar_one_or_none()
-    
-    if args.get("label"):
-        query = select(Timer).where(Timer.status.in_(["ACTIVE", "RINGING"]), Timer.label.ilike(f"%{args['label']}%"))
-        result = await db.execute(query)
-        return result.scalars().first()
-        
-    res = await db.execute(select(Timer).where(Timer.status.in_(["ACTIVE", "RINGING"])))
-    all_timers = res.scalars().all()
-    if len(all_timers) == 1:
-        return all_timers[0]
-    return None
+# --- Logic Handlers (Updated for In-Memory DB) ---
 
 async def handle_alarm_logic(action: str, args: dict):
-    async with AsyncSessionLocal() as db:
-        if action == "create":
-            time_str = args.get("time")
-            if not time_str: return "Error: Time required."
-            try:
-                result = await db.execute(select(User).where(User.id == 1))
-                user = result.scalar_one_or_none()
-                tz = user.timezone if user else None
-                alarm_time = parse_time_string(time_str, tz)
-                new_alarm = Alarm(time=alarm_time, label=args.get("label", "Alarm"), status="ACTIVE")
-                db.add(new_alarm)
-                await db.commit()
-                return f"Alarm set for {alarm_time.strftime('%H:%M')}."
-            except ValueError as e: return f"Error: {e}"
+    if action == "create":
+        time_str = args.get("time")
+        if not time_str: return "Error: Time required."
+        try:
+            profile = await db.get_user_profile()
+            tz = profile.get("timezone")
+            alarm_time = parse_time_string(time_str, tz)
+            
+            await db.create_alarm({
+                "time": alarm_time,
+                "label": args.get("label", "Alarm"),
+                "status": "ACTIVE"
+            })
+            return f"Alarm set for {alarm_time.strftime('%H:%M')}."
+        except ValueError as e: return f"Error: {e}"
 
-        elif action == "read":
-            query = select(Alarm).where(Alarm.status.in_(["ACTIVE", "RINGING"])).order_by(Alarm.time)
-            result = await db.execute(query)
-            alarms = result.scalars().all()
-            if not alarms: return "No active alarms."
-            report = "Alarms:\n"
+    elif action == "read":
+        alarms = await db.get_active_alarms()
+        # Sort
+        alarms.sort(key=lambda x: x["time"])
+        
+        if not alarms: return "No active alarms."
+        report = "Alarms:\n"
+        for a in alarms:
+            status = " (RINGING!)" if a["status"] == "RINGING" else ""
+            report += f"- {a['time'].strftime('%H:%M')} {a['label']}{status}\n"
+        return report
+
+    elif action == "delete":
+        # Simple Logic for Demo: If Stop -> Remove Ringing. If specific -> Remove specific.
+        has_specs = bool(args.get("time") or args.get("label") or args.get("alarm_id"))
+        
+        if not has_specs:
+            # Stop Ringing
+            alarms = await db.get_active_alarms()
+            stopped = 0
             for a in alarms:
-                status = " (RINGING!)" if a.status == "RINGING" else ""
-                report += f"- {a.time.strftime('%H:%M')} {a.label}{status}\n"
-            return report
+                if a["status"] == "RINGING":
+                    await db.delete_alarm(a["id"])
+                    stopped += 1
+            if stopped: return f"Stopped {stopped} ringing alarm(s)."
+            else: return "No ringing alarms found."
+            
+        # Find specific (Iterate over all active alarms)
+        alarms = await db.get_active_alarms()
+        target = None
+        # Simplified Match Logic
+        target_time = None
+        if args.get("time"):
+             try: target_time = parse_time_string(args.get("time"))
+             except: pass
 
-        elif action == "delete":
-            # SAFE DELETE LOGIC:
-            # 1. If NO specific criteria (time/label/id) is provided (Generic "Stop"):
-            #    We ONLY target RINGING alarms. We do NOT touch silent active ones.
-            has_specs = bool(args.get("time") or args.get("label") or args.get("alarm_id"))
+        for a in alarms:
+            if args.get("alarm_id") and str(a["id"]) == str(args["alarm_id"]):
+                 target = a; break
+            if target_time and a["time"] == target_time:
+                 target = a; break
+            if args.get("label") and args["label"].lower() in a["label"].lower():
+                 target = a; break
+        
+        if target:
+            await db.delete_alarm(target["id"])
+            return f"Alarm for {target['time'].strftime('%H:%M')} cancelled."
+        return "Alarm not found."
             
-            if not has_specs:
-                # Look for RINGING alarms only
-                res = await db.execute(select(Alarm).where(Alarm.status == "RINGING"))
-                ringing = res.scalars().all()
-                if ringing:
-                    for a in ringing: await db.delete(a)
-                    await db.commit()
-                    return f"Stopped {len(ringing)} ringing alarm(s)."
-                else:
-                    # If nothing is ringing and no specs, DO NOT delete silent alarms.
-                    return "No ringing alarms found. To cancel a future alarm, please specify the time."
-
-            # 2. If specs provided, find specific alarm
-            target_alarm = await _find_alarm(db, args)
-            if not target_alarm: return "Could not find that alarm."
-            
-            await db.delete(target_alarm)
-            await db.commit()
-            return f"Alarm for {target_alarm.time.strftime('%H:%M')} cancelled."
-            
-        elif action == "update":
-            target_alarm = await _find_alarm(db, args)
-            if not target_alarm: return "Alarm not found."
-            if args.get("new_time"):
-                try:
-                    target_alarm.time = parse_time_string(args.get("new_time"))
-                except ValueError as e: return f"Invalid time: {e}"
-            if args.get("label"): target_alarm.label = args.get("label")
-            await db.commit()
-            return "Alarm updated."
+    elif action == "update":
+         # Simplified Update - Find first match
+         alarms = await db.get_active_alarms()
+         target = None
+         for a in alarms:
+             if args.get("label") and args["label"].lower() in a["label"].lower():
+                 target = a; break
+         
+         if target and args.get("new_time"):
+             try:
+                 new_time = parse_time_string(args.get("new_time"))
+                 await db.update_alarm(target["id"], {"time": new_time})
+                 return "Alarm updated."
+             except Exception as e: return f"Error: {e}"
+         return "Alarm not found or invalid updates."
 
     return "Unknown action."
 
 async def handle_timer_logic(action: str, args: dict):
-    async with AsyncSessionLocal() as db:
-        if action == "create":
-            if not args.get("duration"): return "Duration required."
-            try:
-                sec = parse_duration_string(args.get("duration"))
-                end = datetime.now() + timedelta(seconds=sec)
-                db.add(Timer(duration_seconds=sec, end_time=end, label=args.get("label", "Timer"), status="ACTIVE"))
-                await db.commit()
-                return f"Timer set for {sec}s."
-            except ValueError as e: return f"Error: {e}"
+    if action == "create":
+        if not args.get("duration"): return "Duration required."
+        try:
+            sec = parse_duration_string(args.get("duration"))
+            end = datetime.now() + timedelta(seconds=sec)
+            await db.create_timer({
+                "duration_seconds": sec,
+                "end_time": end,
+                "label": args.get("label", "Timer"),
+                "status": "ACTIVE"
+            })
+            return f"Timer set for {sec}s."
+        except ValueError as e: return f"Error: {e}"
 
-        elif action == "read":
-            now = datetime.now()
-            query = select(Timer).where(Timer.status.in_(["ACTIVE", "RINGING"])).order_by(Timer.end_time)
-            result = await db.execute(query)
-            timers = result.scalars().all()
-            if not timers: return "No active timers."
-            report = "Timers:\n"
+    elif action == "read":
+        timers = await db.get_active_timers()
+        timers.sort(key=lambda x: x["end_time"])
+        if not timers: return "No active timers."
+        now = datetime.now()
+        report = "Timers:\n"
+        for t in timers:
+            remaining = max(0, int((t["end_time"] - now).total_seconds()))
+            if t["status"] == "RINGING": report += f"- {t['label']}: RINGING!\n"
+            else: report += f"- {t['label']}: {remaining}s remaining\n"
+        return report
+
+    elif action == "delete":
+        has_specs = bool(args.get("label") or args.get("timer_id"))
+        if not has_specs:
+            timers = await db.get_active_timers()
+            stopped = 0
             for t in timers:
-                if t.status == "RINGING": report += f"- {t.label}: RINGING!\n"
-                else: report += f"- {t.label}: {max(0, int((t.end_time - now).total_seconds()))}s remaining\n"
-            return report
-
-        elif action == "delete":
-            # SAFE DELETE LOGIC (Same as Alarm)
-            has_specs = bool(args.get("label") or args.get("timer_id"))
+                if t["status"] == "RINGING":
+                    await db.delete_timer(t["id"])
+                    stopped += 1
+            if stopped: return f"Stopped {stopped} ringing timer(s)."
+            else: return "No ringing timers found."
             
-            if not has_specs:
-                res = await db.execute(select(Timer).where(Timer.status == "RINGING"))
-                ringing = res.scalars().all()
-                if ringing:
-                    for t in ringing: await db.delete(t)
-                    await db.commit()
-                    return f"Stopped {len(ringing)} ringing timer(s)."
-                else:
-                    return "No ringing timers found."
-
-            target_timer = await _find_timer(db, args)
-            if not target_timer: return "Timer not found."
-            
-            await db.delete(target_timer)
-            await db.commit()
-            return f"Timer '{target_timer.label}' stopped."
-            
-        elif action == "update":
-            target_timer = await _find_timer(db, args)
-            if not target_timer: return "Timer not found."
-            if args.get("add_time"):
-                try:
-                    target_timer.end_time += timedelta(seconds=parse_duration_string(args.get("add_time")))
-                    await db.commit()
-                    return "Timer updated."
-                except ValueError: return "Invalid duration."
+        timers = await db.get_active_timers()
+        for t in timers:
+             if args.get("label") and args["label"].lower() in t["label"].lower():
+                  await db.delete_timer(t["id"])
+                  return f"Timer '{t['label']}' stopped."
+        return "Timer not found."
 
     return "Unknown action."
 
@@ -331,33 +293,20 @@ async def execute_tool(name: str, args: dict):
     if name == "handle_alarm": return await handle_alarm_logic(args.get("action"), args)
     elif name == "handle_timer": return await handle_timer_logic(args.get("action"), args)
     elif name == "update_profile":
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(select(User).where(User.id == 1))
-            user = result.scalar_one_or_none()
-            if not user: user = User(id=1)
-            if "name" in args: user.name = args["name"]
-            if "city" in args: user.city = args["city"]
-            if "timezone" in args: user.timezone = args["timezone"]
-            if "gender" in args: user.gender = args["gender"]
-            db.add(user)
-            await db.commit()
-            return "Profile updated."
+        updates = {}
+        if "name" in args: updates["name"] = args["name"]
+        if "city" in args: updates["city"] = args["city"]
+        if "timezone" in args: updates["timezone"] = args["timezone"]
+        if "gender" in args: updates["gender"] = args["gender"]
+        await db.update_user_profile("user_1", updates)
+        return "Profile updated."
     elif name == "remember_fact":
         key, value = args.get("key", "").lower().strip(), args.get("value")
         if not key or not value: return "Error: Key/Value required."
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(select(UserMemory).where(UserMemory.key == key))
-            if existing := result.scalar_one_or_none(): existing.value = value
-            else: db.add(UserMemory(user_id=1, key=key, value=value))
-            await db.commit()
-            return f"Remembered {key}."
+        await db.add_memory("user_1", key, value)
+        return f"Remembered {key}."
     elif name == "forget_fact":
         key = args.get("key", "").lower().strip()
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(select(UserMemory).where(UserMemory.key == key))
-            if existing := result.scalar_one_or_none():
-                await db.delete(existing)
-                await db.commit()
-                return f"Forgot {key}."
-            return "Fact not found."
+        await db.delete_memory("user_1", key)
+        return f"Forgot {key}."
     return "Unknown tool"

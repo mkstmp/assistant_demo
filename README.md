@@ -22,13 +22,8 @@ graph TD
         Scheduler[Background Scheduler]
     end
 
-    subgraph Database [SQLite]
-        UserTable[User Profile & Memory]
-        AlarmTable[Alarms]
-        TimerTable[Timers]
-    end
-
     subgraph Cloud [Google Cloud]
+        Firestore[Firestore Database]
         Gemini[Gemini 2.0 Flash API]
     end
 
@@ -41,12 +36,9 @@ graph TD
     Agent <-->|Multimodal Live API| Gemini
     
     Agent -->|Execute| Tools
-    Tools -->|Read/Write| UserTable
-    Tools -->|Read/Write| AlarmTable
-    Tools -->|Read/Write| TimerTable
+    Tools -->|Read/Write| Firestore
     
-    Scheduler -->|Poll Active| AlarmTable
-    Scheduler -->|Poll Active| TimerTable
+    Scheduler -->|Poll Active| Firestore
     Scheduler -->|Notify| SocketServer
 ```
 
@@ -56,8 +48,8 @@ graph TD
 - **🧠 Dynamic Memory**: Remembers arbitrary facts (e.g., "My Wi-Fi password is...").
 - **🌍 Timezone Awareness**: Automatically infers and respects your local time for scheduling.
 - **⏰ Alarms & Timers**: Create, list, stop, and delete alarms/timers with natural language.
-- **👤 User Profile**: Persists name, city, gender, and personal preferences.
-- **🛡️ Private**: Explicitly authorized to store personal convenience data locally.
+- **👤 User Profile**: Persists name, city, gender, and personal preferences in Firestore.
+- **🛡️ Private**: Explicitly authorized to store personal convenience data.
 
 ## 🚀 Getting Started
 
@@ -65,6 +57,7 @@ graph TD
 - Python 3.9+
 - Node.js 18+
 - [Google Gemini API Key](https://aistudio.google.com/)
+- Google Cloud Project with **Firestore** enabled.
 
 ### Backend Setup
 
@@ -75,7 +68,10 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # Create .env file
-echo "GOOGLE_API_KEY=your_key_here" > .env
+echo "GEMINI_API_KEY=your_key_here" > .env
+
+# Authenticate with Google Cloud (for Firestore)
+gcloud auth application-default login
 
 # Run Server
 uvicorn main:app --reload
@@ -95,7 +91,7 @@ npm run dev
 
 ## 🛠️ Tech Stack
 
-- **Backend**: Python, FastAPI, SQLAlchemy (Async), aiosqlite
+- **Backend**: Python, FastAPI, Google Cloud Firestore
 - **Frontend**: TypeScript, Next.js 14, Tailwind CSS, Shadcn UI
 - **AI**: Google Gemini 2.0 Flash (Multimodal Live API)
 - **Audio**: Raw PCM 16-bit streaming (24kHz)

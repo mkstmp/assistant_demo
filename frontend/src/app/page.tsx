@@ -207,7 +207,13 @@ export default function Home() {
             <ul className="text-sm space-y-2">
               {alarms.map((a: any) => (
                 <li key={a.id} className="flex justify-between bg-white/5 p-2 rounded">
-                  <span>{new Date(a.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  <span>
+                    {new Date(a.time).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      timeZone: profile.timezone // Use User Profile Timezone
+                    })}
+                  </span>
                   <span className="text-gray-400 text-xs">{a.label}</span>
                 </li>
               ))}

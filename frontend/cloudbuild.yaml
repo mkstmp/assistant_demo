@@ -1,0 +1,17 @@
+steps:
+  # Build the container image with build-args
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '--build-arg', 'NEXT_PUBLIC_BACKEND_URL=$_BACKEND_URL',
+      '-t', 'gcr.io/$PROJECT_ID/assistant-frontend',
+      '.'
+    ]
+
+# Push the image to Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/assistant-frontend'
+
+# Allow custom substitutions
+substitutions:
+  _BACKEND_URL: 'https://assistant-demo-1047514462039.us-west1.run.app'

@@ -71,7 +71,23 @@ async def get_profile(db: AsyncSession = Depends(get_db)):
     # The relationship with lazy="selectin" will auto-fetch memories
     result = await db.execute(select(User).where(User.id == 1))
     user = result.scalar_one_or_none()
-    return user # User object now includes .memories automatically
+    
+    if not user:
+        return {}
+
+    # Flatten logic: Standard fields + Dynamic Memories
+    profile_data = {
+        "name": user.name,
+        "city": user.city,
+        "timezone": user.timezone,
+        "gender": user.gender,
+    }
+
+    # Add memories as top-level keys
+    for mem in user.memories:
+        profile_data[mem.key] = mem.value
+        
+    return profile_data
 
 # --- WebSocket ---
 

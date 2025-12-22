@@ -24,7 +24,7 @@ async def check_alarms(active_sockets):
                     alarm_time = alarm_time.astimezone(timezone.utc)
                 
                 if alarm["status"] == "ACTIVE" and alarm_time <= now:
-                    print(f"ALARM RINGING: {alarm['label']}", flush=True)
+                    print(f"DEBUG: ALARM RINGING! ID={alarm['id']} Label={alarm['label']}", flush=True)
                     await db.update_alarm(alarm["id"], {"status": "RINGING"})
                     
                     for ws in active_sockets:
@@ -43,7 +43,7 @@ async def check_alarms(active_sockets):
                     end_time = end_time.astimezone(timezone.utc)
 
                 if timer["status"] == "ACTIVE" and end_time <= now:
-                    print(f"TIMER FINISHED: {timer['label']}", flush=True)
+                    print(f"DEBUG: TIMER RINGING! ID={timer['id']} Label={timer['label']}", flush=True)
                     await db.update_timer(timer["id"], {"status": "RINGING"})
                     
                     for ws in active_sockets:

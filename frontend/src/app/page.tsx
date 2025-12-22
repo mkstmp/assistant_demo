@@ -68,9 +68,7 @@ export default function Home() {
 
   // Initialize alarm audio
   useEffect(() => {
-    alarmAudioRef.current = new Audio('https://codeskulptor-demos.commondatastorage.googleapis.com/pang/arrow.mp3'); // Better loopable sound?
-    // Or use the pop sound but loop it manually or use a longer file. 
-    // Let's stick to a simple one for now but set loop = true
+    alarmAudioRef.current = new Audio('/alarm.mp3');
     alarmAudioRef.current.loop = true;
   }, []);
 
@@ -224,12 +222,19 @@ export default function Home() {
         <Card title="Timers" icon={<Clock className="w-6 h-6 mb-2" />}>
           {timers.length === 0 ? <div className="text-sm text-gray-400">No active timers</div> : (
             <ul className="text-sm space-y-2">
-              {timers.map((t: any) => (
-                <li key={t.id} className="flex justify-between bg-white/5 p-2 rounded">
-                  <span>{t.label}</span>
-                  <span className="text-green-400 text-xs">{(new Date(t.end_time).getTime() - new Date().getTime()) > 0 ? Math.ceil((new Date(t.end_time).getTime() - new Date().getTime()) / 1000) + 's' : 'Done'}</span>
-                </li>
-              ))}
+              {timers.map((t: any) => {
+                const isRinging = t.status === "RINGING";
+                const remaining = new Date(t.end_time).getTime() - new Date().getTime();
+
+                return (
+                  <li key={t.id} className={clsx("flex justify-between p-2 rounded", isRinging ? "bg-red-500/20 animate-pulse" : "bg-white/5")}>
+                    <span className={clsx(isRinging && "text-red-400 font-bold")}>{t.label}</span>
+                    <span className={clsx("text-xs", isRinging ? "text-red-400 font-bold" : "text-green-400")}>
+                      {isRinging ? "RINGING" : (remaining > 0 ? Math.ceil(remaining / 1000) + 's' : 'Done')}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </Card>

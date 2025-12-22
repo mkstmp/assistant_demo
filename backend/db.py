@@ -19,19 +19,25 @@ async def get_user_profile(user_id: str = "user_1"):
     user_ref = db.collection(USERS).document(user_id)
     doc = await user_ref.get()
     
-    if not doc.exists:
-        # Create default user if not exists
-        default_data = {
+    default_data = {
             "id": user_id,
             "name": "Mukesh", 
             "city": "San Jose", 
             "timezone": "America/Los_Angeles",
             "gender": "Male"
         }
+
+    if not doc.exists:
+        # Create default user if not exists
         await user_ref.set(default_data)
         return {**default_data, "memories": []}
     
     user_data = doc.to_dict()
+    
+    # Ensure defaults if fields are missing in existing doc
+    for key, val in default_data.items():
+        if key not in user_data:
+            user_data[key] = val
     
     # Fetch memories (Sub-collection)
     memories = []

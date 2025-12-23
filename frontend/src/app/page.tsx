@@ -8,6 +8,8 @@ import { Mic, MicOff, Activity, Clock, Settings, User } from 'lucide-react';
 import clsx from 'clsx';
 
 export default function Home() {
+  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [status, setStatus] = useState("Disconnected");
@@ -19,7 +21,7 @@ export default function Home() {
 
   const fetchProfile = async () => {
     try {
-      const res = await fetch("http://localhost:8000/profile");
+      const res = await fetch(`${BACKEND_URL}/profile`);
       const data = await res.json();
       console.log("DEBUG: Profile Data:", data); // Add Log
       setProfile(data);
@@ -30,7 +32,7 @@ export default function Home() {
 
   const fetchAlarms = async () => {
     try {
-      const res = await fetch("http://localhost:8000/alarms");
+      const res = await fetch(`${BACKEND_URL}/alarms`);
       const data = await res.json();
       setAlarms(data);
     } catch (e) {
@@ -40,7 +42,7 @@ export default function Home() {
 
   const fetchTimers = async () => {
     try {
-      const res = await fetch("http://localhost:8000/timers");
+      const res = await fetch(`${BACKEND_URL}/timers`);
       const data = await res.json();
       setTimers(data);
     } catch (e) {
@@ -83,7 +85,10 @@ export default function Home() {
   const connect = useCallback(() => {
     if (websocketRef.current) return;
 
-    const ws = new WebSocket("ws://localhost:8000/ws/audio");
+    // Derive WS URL from HTTP URL (http -> ws, https -> wss)
+    const wsUrl = BACKEND_URL.replace(/^http/, "ws") + "/ws/audio";
+
+    const ws = new WebSocket(wsUrl);
     audioPlayerRef.current = new AudioPlayer(24000);
 
     ws.onopen = () => {

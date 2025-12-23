@@ -25,6 +25,7 @@ graph TD
     subgraph Cloud [Google Cloud]
         Firestore[Firestore Database]
         Gemini[Gemini 2.0 Flash API]
+        GoogleSearch[Google Search]
     end
 
     %% Connections
@@ -37,6 +38,7 @@ graph TD
     
     Agent -->|Execute| Tools
     Tools -->|Read/Write| Firestore
+    Tools -->|Query| GoogleSearch
     
     Scheduler -->|Poll Active| Firestore
     Scheduler -->|Notify| SocketServer
@@ -48,8 +50,16 @@ graph TD
 - **🧠 Dynamic Memory**: Remembers arbitrary facts (e.g., "My Wi-Fi password is...").
 - **🌍 Timezone Awareness**: Automatically infers and respects your local time for scheduling.
 - **⏰ Alarms & Timers**: Create, list, stop, and delete alarms/timers with natural language.
+- **🌐 Web Search**: Can search Google for real-time information.
 - **👤 User Profile**: Persists name, city, gender, and personal preferences in Firestore.
 - **🛡️ Private**: Explicitly authorized to store personal convenience data.
+
+## ☁️ Live Demo
+
+| Service | URL |
+| :--- | :--- |
+| **Frontend** | [https://assistant-frontend-1047514462039.us-west1.run.app](https://assistant-frontend-1047514462039.us-west1.run.app) |
+| **Backend** | [https://assistant-demo-1047514462039.us-west1.run.app](https://assistant-demo-1047514462039.us-west1.run.app) |
 
 ## 🚀 Getting Started
 
